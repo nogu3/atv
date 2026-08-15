@@ -107,7 +107,9 @@ pub(crate) fn map_session_read_error(e: std::io::Error, got_any_message: bool) -
     if !got_any_message {
         return AtvError::new(
             ErrorKind::AuthRejected,
-            "TV closed the session immediately — client certificate rejected, re-pair needed",
+            format!(
+                "TV closed the session immediately — client certificate rejected, re-pair needed ({e})"
+            ),
         );
     }
     match e.kind() {
@@ -198,10 +200,13 @@ pub struct PowerOutput {
 /// differs from `want_on` — sends a power key press. Idempotent: an
 /// already-matching state is a no-op (`changed: false`).
 ///
-/// After sending the key, best-effort waits up to ~3 s for the TV to
-/// confirm the new state via a fresh `remote_start` message. On timeout or
-/// connection close (typical when the TV powers off), the assumed target
-/// state is reported instead of blocking indefinitely.
+/// After sending the key, best-effort waits for the TV to confirm the new
+/// state via a fresh `remote_start` message, bounded to ~5 s total (each
+/// read has its own 3 s timeout, but a chattering TV that keeps sending
+/// other messages — pings, etc. — without ever confirming is still cut off
+/// by the overall deadline). On timeout, deadline expiry, or connection
+/// close (typical when the TV powers off), the assumed target state is
+/// reported instead of blocking indefinitely.
 pub fn set_power(
     host: std::net::IpAddr,
     port: u16,
@@ -217,21 +222,39 @@ pub fn set_power(
                 format!("failed to send power key: {e}"),
             )
         })?;
-        // Best effort: wait up to ~3 s for the TV to confirm the new state via
-        // remote_start. On timeout or connection close (typical when turning
-        // off), assume the key worked and report the target state.
+        // Best effort: wait for the TV to confirm the new state via
+        // remote_start, bounded to ~5 s total. Each read has its own 3 s
+        // timeout, but that alone isn't a deadline — a chattering TV (e.g.
+        // periodic pings) that never sends remote_start would keep resetting
+        // the per-read clock and hold this one-shot CLI open indefinitely.
+        // The wall-clock deadline below is what actually bounds the loop.
+        // On timeout, deadline expiry, or connection close (typical when
+        // turning off), assume the key worked and report the target state.
         conn.sock
             .set_read_timeout(Some(std::time::Duration::from_secs(3)))
             .ok();
         hs.power = None; // any Some(...) from here on is a fresh observation
         resulting = want_on;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         // Err(_) (timeout or connection close) ends the loop, leaving the
         // pre-seeded assumed target state in place.
-        while let Ok(msg) =
-            crate::framing::read_message::<crate::proto::remote::RemoteMessage, _>(&mut conn)
-        {
-            if let Ok(Some(reply)) = hs.handle(msg) {
-                let _ = crate::framing::write_message(&mut conn, &reply);
+        while std::time::Instant::now() < deadline {
+            let Ok(msg) =
+                crate::framing::read_message::<crate::proto::remote::RemoteMessage, _>(&mut conn)
+            else {
+                break;
+            };
+            match hs.handle(msg) {
+                Ok(Some(reply)) => {
+                    let _ = crate::framing::write_message(&mut conn, &reply);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::debug!(
+                        "ignoring error while awaiting power confirmation: {}",
+                        e.to_json()
+                    );
+                }
             }
             if hs.power == Some(want_on) {
                 break;
@@ -379,9 +402,9 @@ mod tests {
     #[test]
     fn eof_before_any_message_means_auth_rejected() {
         let e = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof");
-        assert!(map_session_read_error(e, false)
-            .to_json()
-            .contains("auth_rejected"));
+        let json = map_session_read_error(e, false).to_json();
+        assert!(json.contains("auth_rejected"));
+        assert!(json.contains("eof"));
     }
 
     #[test]

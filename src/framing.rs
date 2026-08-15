@@ -4,7 +4,6 @@ use prost::Message;
 
 const MAX_FRAME: u64 = 1024 * 1024;
 
-#[allow(dead_code)]
 pub fn write_message<M: Message, W: Write>(w: &mut W, msg: &M) -> io::Result<()> {
     let body = msg.encode_to_vec();
     let mut frame = Vec::with_capacity(body.len() + 5);
@@ -22,7 +21,6 @@ pub fn write_message<M: Message, W: Write>(w: &mut W, msg: &M) -> io::Result<()>
     w.write_all(&frame)
 }
 
-#[allow(dead_code)]
 pub fn read_message<M: Message + Default, R: Read>(r: &mut R) -> io::Result<M> {
     let mut len: u64 = 0;
     for shift in 0..5u32 {

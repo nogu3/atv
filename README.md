@@ -46,10 +46,13 @@ $ atv off --host 192.0.2.10
 {"timestamp":"2026-08-15T12:34:57+09:00","host":"192.0.2.10","power":"off","changed":false}
 ```
 
-When a key is sent, `atv` waits up to ~3 s for the TV to confirm the new
-state over the session connection. If the TV doesn't confirm in time — or
-closes the connection, which is typical when it powers off — `atv` reports
-the requested state as a best-effort assumption rather than blocking or
+When a key is sent, `atv` waits for the TV to confirm the new state over the
+session connection, bounded to ~5 s max overall (each read has its own 3 s
+timeout, but the wall-clock deadline is what stops a chattering TV — one
+that keeps sending other messages without ever confirming — from holding
+the CLI open indefinitely). If the TV doesn't confirm in time — or closes
+the connection, which is typical when it powers off — `atv` reports the
+requested state as a best-effort assumption rather than blocking or
 failing; it does not re-verify with a follow-up `status` call.
 
 ## Output conventions

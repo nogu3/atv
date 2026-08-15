@@ -5,6 +5,7 @@ mod framing;
 mod identity;
 mod pairing;
 mod proto;
+mod tls;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;

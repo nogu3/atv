@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod error;
+mod proto;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;

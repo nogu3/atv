@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod framing;
 mod identity;
+mod pairing;
 mod proto;
 
 use clap::Parser;

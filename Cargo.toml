@@ -17,9 +17,14 @@ rsa = { version = "0.9", features = ["sha2"] }
 rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+x509-parser = "0.16"
 
 [build-dependencies]
 prost-build = "0.13"
 protox = "0.7"
+
+[dev-dependencies]
+pem = "3"

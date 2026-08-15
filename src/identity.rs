@@ -46,9 +46,53 @@ pub fn generate_identity() -> Result<(String, String), AtvError> {
     Ok((cert.pem(), key_pem))
 }
 
+/// Writes the private key PEM to `path` with mode 0600 from creation on
+/// unix (via `OpenOptions::mode`, not a post-hoc `chmod`) so there is no
+/// window where the key is readable at the umask-default mode. On
+/// non-unix platforms this is a plain write — no equivalent primitive.
+fn write_key_file(path: &Path, contents: &str) -> Result<(), AtvError> {
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| {
+                AtvError::new(
+                    ErrorKind::ConfigIo,
+                    format!("cannot create {}: {e}", path.display()),
+                )
+            })?;
+        file.write_all(contents.as_bytes()).map_err(|e| {
+            AtvError::new(
+                ErrorKind::ConfigIo,
+                format!("cannot write {}: {e}", path.display()),
+            )
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, contents).map_err(|e| {
+            AtvError::new(
+                ErrorKind::ConfigIo,
+                format!("cannot write {}: {e}", path.display()),
+            )
+        })
+    }
+}
+
 /// Idempotently ensures `dir/cert.pem` and `dir/key.pem` exist, generating a
 /// new RSA-2048 identity only if either file is missing. The key file is
-/// written with mode 0600 on unix.
+/// written with mode 0600 from creation on unix (see [`write_key_file`]).
+///
+/// Note: the existence short-circuit below only checks that both files are
+/// present — it does not re-verify or repair the key file's permissions on
+/// an existing identity (e.g. one created before this 0600-on-creation
+/// behavior, or manually widened by an operator).
 // Wired up by the `pair` command in a later task; unused for now.
 #[cfg_attr(not(test), expect(dead_code))]
 pub fn ensure_identity(dir: &Path) -> Result<(), AtvError> {
@@ -70,18 +114,7 @@ pub fn ensure_identity(dir: &Path) -> Result<(), AtvError> {
             format!("cannot write {}: {e}", cert_path.display()),
         )
     })?;
-    std::fs::write(&key_path, key_pem).map_err(|e| {
-        AtvError::new(
-            ErrorKind::ConfigIo,
-            format!("cannot write {}: {e}", key_path.display()),
-        )
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| AtvError::new(ErrorKind::ConfigIo, format!("cannot chmod key: {e}")))?;
-    }
+    write_key_file(&key_path, &key_pem)?;
     Ok(())
 }
 

@@ -122,12 +122,12 @@ impl PairingFlow {
     /// (if any).
     pub fn handle(&mut self, msg: &OuterMessage) -> Result<Option<OuterMessage>, AtvError> {
         if msg.status != Status::Ok as i32 {
+            let status_desc = Status::try_from(msg.status)
+                .map(|s| format!("{s:?} ({})", msg.status))
+                .unwrap_or_else(|_| msg.status.to_string());
             return Err(AtvError::new(
                 ErrorKind::PairingFailed,
-                format!(
-                    "TV reported pairing status {} — wrong code or user declined?",
-                    msg.status
-                ),
+                format!("TV reported pairing status {status_desc} — wrong code or user declined?"),
             ));
         }
         if msg.pairing_request_ack.is_some() {
@@ -137,7 +137,7 @@ impl PairingFlow {
                 options: Some(Options {
                     input_encodings: vec![hex6_encoding()],
                     output_encodings: Vec::new(),
-                    preferred_role: None,
+                    preferred_role: Some(options::RoleType::Input as i32),
                 }),
                 ..Default::default()
             }))
@@ -322,6 +322,10 @@ mod flow_tests {
         let opts = reply.options.unwrap();
         assert_eq!(opts.input_encodings.len(), 1);
         assert_eq!(opts.input_encodings[0].symbol_length, 6);
+        assert_eq!(
+            opts.preferred_role,
+            Some(polo::options::RoleType::Input as i32)
+        );
 
         let mut server_opts = ok_msg();
         server_opts.options = Some(polo::Options::default());
@@ -340,6 +344,8 @@ mod flow_tests {
         let mut bad = ok_msg();
         bad.status = Status::BadSecret as i32;
         let err = flow.handle(&bad).unwrap_err();
-        assert!(err.to_json().contains("pairing_failed"));
+        let json = err.to_json();
+        assert!(json.contains("pairing_failed"));
+        assert!(json.contains("BadSecret (402)"), "detail was: {json}");
     }
 }

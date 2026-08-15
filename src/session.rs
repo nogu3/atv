@@ -137,6 +137,26 @@ mod tests {
     }
 
     #[test]
+    fn set_active_reply_uses_features_intersected_by_prior_configure() {
+        let mut hs = SessionHandshake::new();
+        let configure_msg = RemoteMessage {
+            remote_configure: Some(RemoteConfigure {
+                code1: 3, // server supports only PING|KEY
+                device_info: None,
+            }),
+            ..Default::default()
+        };
+        hs.handle(configure_msg).unwrap();
+
+        let set_active_msg = RemoteMessage {
+            remote_set_active: Some(RemoteSetActive { active: 0 }),
+            ..Default::default()
+        };
+        let reply = hs.handle(set_active_msg).unwrap().unwrap();
+        assert_eq!(reply.remote_set_active.unwrap().active, 3);
+    }
+
+    #[test]
     fn echoes_ping_val1() {
         let mut hs = SessionHandshake::new();
         let msg = RemoteMessage {
@@ -156,6 +176,24 @@ mod tests {
         };
         assert!(hs.handle(msg).unwrap().is_none());
         assert_eq!(hs.power, Some(true));
+    }
+
+    #[test]
+    fn remote_start_transitions_power_from_true_to_false() {
+        let mut hs = SessionHandshake::new();
+        hs.handle(RemoteMessage {
+            remote_start: Some(RemoteStart { started: true }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(hs.power, Some(true));
+
+        hs.handle(RemoteMessage {
+            remote_start: Some(RemoteStart { started: false }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(hs.power, Some(false));
     }
 
     #[test]

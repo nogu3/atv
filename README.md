@@ -17,7 +17,21 @@ atv off    --host <ip>
 `--port` overrides the default port (6467 for `pair`, 6466 otherwise).
 `--host` takes an IP address only; no name resolution.
 
-> Status: Phase 0 (CLI skeleton). Pairing and session commands are not
+`pair` prompts on stderr and reads the 6-hex-digit code shown on the TV from
+stdin:
+
+```
+$ atv pair --host 192.0.2.10
+Enter the 6-digit code shown on the TV:
+1a2b3c
+{"timestamp":"2026-08-15T12:34:56+09:00","host":"192.0.2.10","paired":true}
+```
+
+If the code is already known, it can be piped in instead of typed
+interactively (`echo 1a2b3c | atv pair --host 192.0.2.10`) — not the typical
+flow, since the code is generated fresh by the TV on each pairing attempt.
+
+> Status: Phase 1 (pairing) implemented. `status`/`on`/`off` are not
 > implemented yet and report `protocol_error`.
 
 ## Output conventions
@@ -36,11 +50,12 @@ atv off    --host <ip>
 | kind | meaning |
 |---|---|
 | `not_paired` | No credential store yet, or certificate rejected — run `atv pair` |
+| `unreachable` | Could not reach `host:port` — TV off/unplugged, wrong IP, or off the network without standby |
+| `pairing_failed` | Pairing did not complete — wrong code, TV declined, or the TV closed the connection after the secret |
 | `protocol_error` | Internal / protocol failure (also: not-yet-implemented commands) |
 | `config_io` | Credential directory could not be resolved or accessed |
 
-Reserved for upcoming phases: `unreachable`, `auth_rejected`,
-`pairing_failed`.
+Reserved for an upcoming phase: `auth_rejected`.
 
 ### Exit codes
 

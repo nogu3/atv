@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod framing;
 mod identity;
+mod output;
 mod pairing;
 mod proto;
 mod tls;
@@ -32,18 +33,20 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), AtvError> {
     let credential_dir = config::credential_dir_from_env()?;
+    let port = cli.command.port();
     tracing::debug!(
         dir = %credential_dir.display(),
         host = %cli.command.args().host,
-        port = cli.command.port(),
+        port,
         "resolved credential directory and target"
     );
 
     match cli.command {
-        Command::Pair(_) => Err(AtvError::new(
-            ErrorKind::ProtocolError,
-            "pair is not implemented yet (Phase 1)",
-        )),
+        Command::Pair(args) => {
+            let out = pairing::pair(args.host, port)?;
+            output::emit(&out);
+            Ok(())
+        }
         Command::Status(_) | Command::On(_) | Command::Off(_) => {
             config::ensure_paired(&credential_dir)?;
             Err(AtvError::new(

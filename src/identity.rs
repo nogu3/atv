@@ -12,8 +12,6 @@ use crate::error::{AtvError, ErrorKind};
 /// `aws_lc_rs`) both hard-reject RSA keys under 2048 bits when importing
 /// for signing, so this is not parameterized by key size — 2048 is the
 /// only size that works, in tests as well as production.
-// Wired up by the `pair` command in a later task; unused for now.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn generate_identity() -> Result<(String, String), AtvError> {
     let key = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).map_err(|e| {
         AtvError::new(
@@ -93,8 +91,6 @@ fn write_key_file(path: &Path, contents: &str) -> Result<(), AtvError> {
 /// present — it does not re-verify or repair the key file's permissions on
 /// an existing identity (e.g. one created before this 0600-on-creation
 /// behavior, or manually widened by an operator).
-// Wired up by the `pair` command in a later task; unused for now.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn ensure_identity(dir: &Path) -> Result<(), AtvError> {
     let cert_path = dir.join("cert.pem");
     let key_path = dir.join("key.pem");

@@ -5,14 +5,10 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorKind {
-    /// Constructed from Phase 1-3 network code on; already part of the
-    /// stable contract, hence tested before use.
-    #[cfg_attr(not(test), expect(dead_code))]
     Unreachable,
     NotPaired,
     #[cfg_attr(not(test), expect(dead_code))]
     AuthRejected,
-    #[cfg_attr(not(test), expect(dead_code))]
     PairingFailed,
     ProtocolError,
     ConfigIo,

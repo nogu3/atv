@@ -44,13 +44,20 @@ fn session_commands_without_credential_store_exit_4_with_not_paired() {
 }
 
 #[test]
-fn pair_reports_unimplemented_as_documented_error_shape() {
-    let dir = empty_credential_dir("no-store-pair");
-    let out = run_atv(&["pair", "--host", "192.0.2.10"], &dir);
-    assert_eq!(out.status.code(), Some(1));
+fn pair_against_unreachable_host_creates_identity_and_reports_unreachable() {
+    let dir = empty_credential_dir("pair-unreachable");
+    // RFC 5737 TEST-NET-1 address, port 1: not routable / refused fast, so
+    // this exercises identity generation + the connect failure path without
+    // waiting out the full connect timeout.
+    let out = run_atv(&["pair", "--host", "192.0.2.10", "--port", "1"], &dir);
+    assert_eq!(out.status.code(), Some(3));
     assert!(out.stdout.is_empty());
     let err = stderr_error(&out);
-    assert_eq!(err["error"]["kind"], "protocol_error");
+    assert_eq!(err["error"]["kind"], "unreachable");
+    // Identity generation happens before connect, so the credential files
+    // exist even though pairing itself never got off the ground.
+    assert!(dir.join("cert.pem").is_file());
+    assert!(dir.join("key.pem").is_file());
 }
 
 #[test]

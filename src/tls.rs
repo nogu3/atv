@@ -73,13 +73,11 @@ impl ServerCertVerifier for AcceptAnyServerCert {
 
 #[derive(Debug)]
 pub struct TlsClient {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub client_cert_der: Vec<u8>,
     config: Arc<ClientConfig>,
 }
 
 impl TlsClient {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_credential_dir(dir: &Path) -> Result<Self, AtvError> {
         config::ensure_paired(dir)?; // not_paired if files missing
         let cert_pem = std::fs::read(dir.join("cert.pem")).map_err(|e| {
@@ -126,7 +124,6 @@ impl TlsClient {
         })
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn connect(&self, host: IpAddr, port: u16, timeout: Duration) -> Result<Conn, AtvError> {
         let addr = SocketAddr::new(host, port);
         let unreachable = |e: &dyn std::fmt::Display| {
@@ -149,7 +146,6 @@ impl TlsClient {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn peer_cert_der(conn: &Conn) -> Result<Vec<u8>, AtvError> {
     conn.conn
         .peer_certificates()

@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod error;
+mod framing;
 mod proto;
 
 use clap::Parser;

@@ -13,7 +13,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use cli::{Cli, Command};
-use error::{AtvError, ErrorKind};
+use error::AtvError;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -53,12 +53,15 @@ fn run(cli: Cli) -> Result<(), AtvError> {
             output::emit(&out);
             Ok(())
         }
-        Command::On(_) | Command::Off(_) => {
-            config::ensure_paired(&credential_dir)?;
-            Err(AtvError::new(
-                ErrorKind::ProtocolError,
-                "power control is not implemented yet (Phase 3)",
-            ))
+        Command::On(args) => {
+            let out = session::set_power(args.host, port, true)?;
+            output::emit(&out);
+            Ok(())
+        }
+        Command::Off(args) => {
+            let out = session::set_power(args.host, port, false)?;
+            output::emit(&out);
+            Ok(())
         }
     }
 }

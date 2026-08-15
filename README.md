@@ -31,8 +31,26 @@ If the code is already known, it can be piped in instead of typed
 interactively (`echo 1a2b3c | atv pair --host 192.0.2.10`) — not the typical
 flow, since the code is generated fresh by the TV on each pairing attempt.
 
-> Status: Phase 1 (pairing) and Phase 2 (`status`) implemented. `on`/`off`
-> are not implemented yet and report `protocol_error`.
+> Status: Phase 1 (pairing), Phase 2 (`status`), and Phase 3 (`on`/`off`)
+> implemented.
+
+`on`/`off` are idempotent: they read the TV's current power state and only
+send a power key press when it differs from the requested state. The
+`changed` field in the output reports whether a key was actually sent —
+`false` means the TV was already in the requested state.
+
+```
+$ atv off --host 192.0.2.10
+{"timestamp":"2026-08-15T12:34:56+09:00","host":"192.0.2.10","power":"off","changed":true}
+$ atv off --host 192.0.2.10
+{"timestamp":"2026-08-15T12:34:57+09:00","host":"192.0.2.10","power":"off","changed":false}
+```
+
+When a key is sent, `atv` waits up to ~3 s for the TV to confirm the new
+state over the session connection. If the TV doesn't confirm in time — or
+closes the connection, which is typical when it powers off — `atv` reports
+the requested state as a best-effort assumption rather than blocking or
+failing; it does not re-verify with a follow-up `status` call.
 
 ## Output conventions
 
@@ -53,7 +71,7 @@ flow, since the code is generated fresh by the TV on each pairing attempt.
 | `auth_rejected` | TV closed the session immediately (client certificate rejected) — re-`pair` needed |
 | `unreachable` | Could not reach `host:port` — TV off/unplugged, wrong IP, or off the network without standby |
 | `pairing_failed` | Pairing did not complete — wrong code, TV declined, or the TV closed the connection after the secret |
-| `protocol_error` | Internal / protocol failure (also: not-yet-implemented commands) |
+| `protocol_error` | Internal / protocol failure |
 | `config_io` | Credential directory could not be resolved or accessed |
 
 ### Exit codes

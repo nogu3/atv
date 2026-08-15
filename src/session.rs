@@ -89,7 +89,6 @@ impl Default for SessionHandshake {
 }
 
 /// Builds the `RemoteMessage` that injects a short press of the power key.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn power_key_message() -> RemoteMessage {
     RemoteMessage {
         remote_key_inject: Some(RemoteKeyInject {
@@ -177,6 +176,76 @@ pub fn status(host: std::net::IpAddr, port: u16) -> Result<StatusOutput, AtvErro
         timestamp: crate::output::timestamp(),
         host: host.to_string(),
         power: power_str(on),
+    })
+}
+
+/// Whether a power key press is required to move from `current_on` to
+/// `want_on`. Idempotent: same state on both sides means no-op.
+pub fn needs_power_key(current_on: bool, want_on: bool) -> bool {
+    current_on != want_on
+}
+
+/// stdout payload for `atv on` / `atv off`.
+#[derive(Debug, Serialize)]
+pub struct PowerOutput {
+    pub timestamp: String,
+    pub host: String,
+    pub power: &'static str,
+    pub changed: bool,
+}
+
+/// Connects to the TV, reads its current power state, and — only if it
+/// differs from `want_on` — sends a power key press. Idempotent: an
+/// already-matching state is a no-op (`changed: false`).
+///
+/// After sending the key, best-effort waits up to ~3 s for the TV to
+/// confirm the new state via a fresh `remote_start` message. On timeout or
+/// connection close (typical when the TV powers off), the assumed target
+/// state is reported instead of blocking indefinitely.
+pub fn set_power(
+    host: std::net::IpAddr,
+    port: u16,
+    want_on: bool,
+) -> Result<PowerOutput, AtvError> {
+    let (current, mut conn, mut hs) = read_power(host, port)?;
+    let changed = needs_power_key(current, want_on);
+    let mut resulting = current;
+    if changed {
+        crate::framing::write_message(&mut conn, &power_key_message()).map_err(|e| {
+            AtvError::new(
+                ErrorKind::ProtocolError,
+                format!("failed to send power key: {e}"),
+            )
+        })?;
+        // Best effort: wait up to ~3 s for the TV to confirm the new state via
+        // remote_start. On timeout or connection close (typical when turning
+        // off), assume the key worked and report the target state.
+        conn.sock
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .ok();
+        hs.power = None; // any Some(...) from here on is a fresh observation
+        resulting = want_on;
+        // Err(_) (timeout or connection close) ends the loop, leaving the
+        // pre-seeded assumed target state in place.
+        while let Ok(msg) =
+            crate::framing::read_message::<crate::proto::remote::RemoteMessage, _>(&mut conn)
+        {
+            if let Ok(Some(reply)) = hs.handle(msg) {
+                let _ = crate::framing::write_message(&mut conn, &reply);
+            }
+            if hs.power == Some(want_on) {
+                break;
+            }
+        }
+        if let Some(observed) = hs.power {
+            resulting = observed;
+        }
+    }
+    Ok(PowerOutput {
+        timestamp: crate::output::timestamp(),
+        host: host.to_string(),
+        power: power_str(resulting),
+        changed,
     })
 }
 
@@ -327,5 +396,13 @@ mod tests {
     fn power_str_maps_bool() {
         assert_eq!(power_str(true), "on");
         assert_eq!(power_str(false), "off");
+    }
+
+    #[test]
+    fn power_key_sent_only_when_state_differs() {
+        assert!(!needs_power_key(true, true)); // on → on: no-op
+        assert!(!needs_power_key(false, false)); // off → off: no-op
+        assert!(needs_power_key(false, true));
+        assert!(needs_power_key(true, false));
     }
 }

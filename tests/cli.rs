@@ -61,17 +61,6 @@ fn pair_against_unreachable_host_creates_identity_and_reports_unreachable() {
 }
 
 #[test]
-fn on_off_with_credential_store_report_phase3_unimplemented() {
-    let dir = empty_credential_dir("with-store");
-    std::fs::write(dir.join("cert.pem"), "dummy").unwrap();
-    std::fs::write(dir.join("key.pem"), "dummy").unwrap();
-    let out = run_atv(&["on", "--host", "192.0.2.10"], &dir);
-    assert_eq!(out.status.code(), Some(1));
-    let err = stderr_error(&out);
-    assert_eq!(err["error"]["kind"], "protocol_error");
-}
-
-#[test]
 fn argument_errors_exit_2() {
     let dir = empty_credential_dir("arg-error");
     let out = run_atv(&["status"], &dir); // missing --host

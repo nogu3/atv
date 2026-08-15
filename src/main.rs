@@ -48,11 +48,16 @@ fn run(cli: Cli) -> Result<(), AtvError> {
             output::emit(&out);
             Ok(())
         }
-        Command::Status(_) | Command::On(_) | Command::Off(_) => {
+        Command::Status(args) => {
+            let out = session::status(args.host, port)?;
+            output::emit(&out);
+            Ok(())
+        }
+        Command::On(_) | Command::Off(_) => {
             config::ensure_paired(&credential_dir)?;
             Err(AtvError::new(
                 ErrorKind::ProtocolError,
-                "session commands are not implemented yet (Phase 2)",
+                "power control is not implemented yet (Phase 3)",
             ))
         }
     }

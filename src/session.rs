@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::error::{AtvError, ErrorKind};
 use crate::proto::remote::{
     RemoteConfigure, RemoteDeviceInfo, RemoteDirection, RemoteKeyCode, RemoteKeyInject,
@@ -5,18 +7,15 @@ use crate::proto::remote::{
 };
 
 /// Feature bits this client supports: PING (1) | KEY (2) | POWER (32).
-#[cfg_attr(not(test), expect(dead_code))]
 pub const FEATURES: i32 = 1 | 2 | 32;
 
 /// Tracks the state of the Remote v2 session handshake (configure /
 /// set_active / ping / start) as messages arrive from the TV.
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct SessionHandshake {
     pub power: Option<bool>,
     active_features: i32,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 impl SessionHandshake {
     pub fn new() -> Self {
         Self {
@@ -99,6 +98,86 @@ pub fn power_key_message() -> RemoteMessage {
         }),
         ..Default::default()
     }
+}
+
+/// Translates an I/O error from the session read loop into the appropriate
+/// `AtvError`: a closed connection before any message flowed means the TV
+/// rejected the client certificate; a timeout or other error after messages
+/// flowed means the handshake stalled or the TV misbehaved mid-session.
+pub(crate) fn map_session_read_error(e: std::io::Error, got_any_message: bool) -> AtvError {
+    if !got_any_message {
+        return AtvError::new(
+            ErrorKind::AuthRejected,
+            "TV closed the session immediately — client certificate rejected, re-pair needed",
+        );
+    }
+    match e.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => AtvError::new(
+            ErrorKind::ProtocolError,
+            "TV stopped responding during session handshake",
+        ),
+        _ => AtvError::new(ErrorKind::ProtocolError, e.to_string()),
+    }
+}
+
+/// Connects to the session port and pumps messages through
+/// `SessionHandshake` until the TV's power state is known. Returns the
+/// power state alongside the live connection and handshake state so
+/// callers (e.g. `on`/`off`) can keep talking to the TV without
+/// reconnecting.
+pub fn read_power(
+    host: std::net::IpAddr,
+    port: u16,
+) -> Result<(bool, crate::tls::Conn, SessionHandshake), AtvError> {
+    let dir = crate::config::credential_dir_from_env()?;
+    let tls = crate::tls::TlsClient::from_credential_dir(&dir)?;
+    let mut conn = tls.connect(host, port, std::time::Duration::from_secs(5))?;
+    let mut hs = SessionHandshake::new();
+    let mut got_any = false;
+    while hs.power.is_none() {
+        let msg: crate::proto::remote::RemoteMessage = crate::framing::read_message(&mut conn)
+            .map_err(|e| map_session_read_error(e, got_any))?;
+        got_any = true;
+        if let Some(reply) = hs.handle(msg)? {
+            crate::framing::write_message(&mut conn, &reply).map_err(|e| {
+                AtvError::new(
+                    ErrorKind::ProtocolError,
+                    format!("session write failed: {e}"),
+                )
+            })?;
+        }
+    }
+    let power = hs.power.expect("loop exits only with power set");
+    Ok((power, conn, hs))
+}
+
+/// Maps a boolean power state to the documented `"on"`/`"off"` string.
+pub fn power_str(on: bool) -> &'static str {
+    if on {
+        "on"
+    } else {
+        "off"
+    }
+}
+
+/// stdout payload for `atv status`.
+#[derive(Debug, Serialize)]
+pub struct StatusOutput {
+    pub timestamp: String,
+    pub host: String,
+    pub power: &'static str,
+}
+
+/// Connects to the TV, reads its power state, and builds the `status`
+/// output. The connection and handshake are dropped once the state is
+/// known — `status` is one-shot.
+pub fn status(host: std::net::IpAddr, port: u16) -> Result<StatusOutput, AtvError> {
+    let (on, _conn, _hs) = read_power(host, port)?;
+    Ok(StatusOutput {
+        timestamp: crate::output::timestamp(),
+        host: host.to_string(),
+        power: power_str(on),
+    })
 }
 
 #[cfg(test)]
@@ -226,5 +305,27 @@ mod tests {
         let inject = msg.remote_key_inject.unwrap();
         assert_eq!(inject.key_code, RemoteKeyCode::KeycodePower as i32);
         assert_eq!(inject.direction, RemoteDirection::Short as i32);
+    }
+
+    #[test]
+    fn eof_before_any_message_means_auth_rejected() {
+        let e = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof");
+        assert!(map_session_read_error(e, false)
+            .to_json()
+            .contains("auth_rejected"));
+    }
+
+    #[test]
+    fn timeout_after_messages_is_protocol_error() {
+        let e = std::io::Error::new(std::io::ErrorKind::TimedOut, "t");
+        assert!(map_session_read_error(e, true)
+            .to_json()
+            .contains("protocol_error"));
+    }
+
+    #[test]
+    fn power_str_maps_bool() {
+        assert_eq!(power_str(true), "on");
+        assert_eq!(power_str(false), "off");
     }
 }

@@ -7,7 +7,6 @@ use serde::Serialize;
 pub enum ErrorKind {
     Unreachable,
     NotPaired,
-    #[cfg_attr(not(test), expect(dead_code))]
     AuthRejected,
     PairingFailed,
     ProtocolError,

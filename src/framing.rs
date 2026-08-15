@@ -192,8 +192,9 @@ mod tests {
     #[test]
     fn rejects_frame_exceeding_1mib() {
         // Create a frame with payload exceeding MAX_FRAME by 1 byte
-        // Varint for 1_048_577 (MAX_FRAME + 1): 0x81 0x80 0x80 0x04
-        let buf = vec![0x81u8, 0x80, 0x80, 0x04];
+        // MAX_FRAME + 1 = 1_048_577 = 0x100001
+        // Varint for 1_048_577 (MAX_FRAME + 1): 0x81 0x80 0x40
+        let buf = vec![0x81u8, 0x80, 0x40];
 
         // This should fail with InvalidData before trying to read that many bytes
         let err = read_message::<RemoteMessage, _>(&mut Cursor::new(&buf)).unwrap_err();

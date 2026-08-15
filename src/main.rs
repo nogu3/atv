@@ -6,6 +6,7 @@ mod identity;
 mod output;
 mod pairing;
 mod proto;
+mod session;
 mod tls;
 
 use clap::Parser;

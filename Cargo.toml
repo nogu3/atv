@@ -1,0 +1,16 @@
+[package]
+name = "atv"
+version = "0.1.0"
+edition = "2021"
+description = "Thin CLI for controlling Android TV / Google TV devices over the Android TV Remote protocol v2"
+license = "MIT"
+repository = "https://github.com/nogu3/atv"
+keywords = ["android-tv", "google-tv", "remote", "cli"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

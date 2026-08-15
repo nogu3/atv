@@ -1,0 +1,120 @@
+use std::path::Path;
+
+use rsa::pkcs8::EncodePrivateKey;
+use rsa::RsaPrivateKey;
+
+use crate::error::{AtvError, ErrorKind};
+
+/// Generates a fresh RSA-2048 (e=65537) private key and a self-signed
+/// certificate (CN "atv") for it, returning `(cert_pem, key_pem)`.
+///
+/// Note: rcgen 0.13's supported RSA-signing backends (`ring` and
+/// `aws_lc_rs`) both hard-reject RSA keys under 2048 bits when importing
+/// for signing, so this is not parameterized by key size — 2048 is the
+/// only size that works, in tests as well as production.
+// Wired up by the `pair` command in a later task; unused for now.
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn generate_identity() -> Result<(String, String), AtvError> {
+    let key = RsaPrivateKey::new(&mut rand::thread_rng(), 2048).map_err(|e| {
+        AtvError::new(
+            ErrorKind::ConfigIo,
+            format!("RSA key generation failed: {e}"),
+        )
+    })?;
+    let key_der = key
+        .to_pkcs8_der()
+        .map_err(|e| AtvError::new(ErrorKind::ConfigIo, format!("PKCS#8 encoding failed: {e}")))?;
+    let key_pair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+        &rustls_pki_types::PrivatePkcs8KeyDer::from(key_der.as_bytes()),
+        &rcgen::PKCS_RSA_SHA256,
+    )
+    .map_err(|e| AtvError::new(ErrorKind::ConfigIo, format!("rcgen key import failed: {e}")))?;
+    let mut params = rcgen::CertificateParams::default();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "atv");
+    let cert = params.self_signed(&key_pair).map_err(|e| {
+        AtvError::new(
+            ErrorKind::ConfigIo,
+            format!("certificate build failed: {e}"),
+        )
+    })?;
+    let key_pem = key_der
+        .to_pem("PRIVATE KEY", rsa::pkcs8::LineEnding::LF)
+        .map_err(|e| AtvError::new(ErrorKind::ConfigIo, format!("PEM encoding failed: {e}")))?
+        .to_string();
+    Ok((cert.pem(), key_pem))
+}
+
+/// Idempotently ensures `dir/cert.pem` and `dir/key.pem` exist, generating a
+/// new RSA-2048 identity only if either file is missing. The key file is
+/// written with mode 0600 on unix.
+// Wired up by the `pair` command in a later task; unused for now.
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn ensure_identity(dir: &Path) -> Result<(), AtvError> {
+    let cert_path = dir.join("cert.pem");
+    let key_path = dir.join("key.pem");
+    if cert_path.is_file() && key_path.is_file() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| {
+        AtvError::new(
+            ErrorKind::ConfigIo,
+            format!("cannot create {}: {e}", dir.display()),
+        )
+    })?;
+    let (cert_pem, key_pem) = generate_identity()?;
+    std::fs::write(&cert_path, cert_pem).map_err(|e| {
+        AtvError::new(
+            ErrorKind::ConfigIo,
+            format!("cannot write {}: {e}", cert_path.display()),
+        )
+    })?;
+    std::fs::write(&key_path, key_pem).map_err(|e| {
+        AtvError::new(
+            ErrorKind::ConfigIo,
+            format!("cannot write {}: {e}", key_path.display()),
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| AtvError::new(ErrorKind::ConfigIo, format!("cannot chmod key: {e}")))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_identity_creates_valid_identity_once_idempotently() {
+        let dir = std::env::temp_dir().join(format!("atv-id-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        ensure_identity(&dir).unwrap();
+
+        let cert_path = dir.join("cert.pem");
+        let key_path = dir.join("key.pem");
+        let cert_pem = std::fs::read(&cert_path).unwrap();
+        let key_pem = std::fs::read(&key_path).unwrap();
+        assert!(cert_pem.starts_with(b"-----BEGIN CERTIFICATE-----"));
+        assert!(key_pem.starts_with(b"-----BEGIN PRIVATE KEY-----"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&key_path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        ensure_identity(&dir).unwrap(); // second call: no regeneration
+        assert_eq!(std::fs::read(&cert_path).unwrap(), cert_pem);
+        assert_eq!(std::fs::read(&key_path).unwrap(), key_pem);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

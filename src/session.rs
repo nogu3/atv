@@ -6,8 +6,9 @@ use crate::proto::remote::{
     RemoteMessage, RemotePingResponse, RemoteSetActive,
 };
 
-/// Feature bits this client supports: PING (1) | KEY (2) | POWER (32).
-pub const FEATURES: i32 = 1 | 2 | 32;
+/// Feature bits this client supports:
+/// PING (1) | KEY (2) | POWER (32) | APP_LINK (512).
+pub const FEATURES: i32 = 1 | 2 | 32 | 512;
 
 /// Grace period between the session becoming ready (`remote_start`) and
 /// sending a key inject. TVs silently drop keys that arrive too early
@@ -94,15 +95,38 @@ impl Default for SessionHandshake {
     }
 }
 
-/// Builds the `RemoteMessage` that injects a short press of the power key.
-pub fn power_key_message() -> RemoteMessage {
+/// Builds the `RemoteMessage` that injects a short press of `key_code`.
+pub fn key_message(key_code: i32) -> RemoteMessage {
     RemoteMessage {
         remote_key_inject: Some(RemoteKeyInject {
-            key_code: RemoteKeyCode::KeycodePower as i32,
+            key_code,
             direction: RemoteDirection::Short as i32,
         }),
         ..Default::default()
     }
+}
+
+/// Builds the `RemoteMessage` that injects a short press of the power key.
+pub fn power_key_message() -> RemoteMessage {
+    key_message(RemoteKeyCode::KeycodePower as i32)
+}
+
+/// Builds the `RemoteMessage` that asks the TV to launch an app link.
+pub fn app_link_message(app_link: &str) -> RemoteMessage {
+    RemoteMessage {
+        remote_app_link_launch_request: Some(crate::proto::remote::RemoteAppLinkLaunchRequest {
+            app_link: app_link.to_string(),
+        }),
+        ..Default::default()
+    }
+}
+
+/// Canonical `KEYCODE_*` name for a keycode, falling back to the number
+/// itself for values the vendored proto does not name.
+pub fn keycode_name(key_code: i32) -> String {
+    RemoteKeyCode::try_from(key_code)
+        .map(|k| k.as_str_name().to_string())
+        .unwrap_or_else(|_| key_code.to_string())
 }
 
 /// Translates an I/O error from the session read loop into the appropriate
@@ -185,6 +209,76 @@ pub fn status(host: std::net::IpAddr, port: u16) -> Result<StatusOutput, AtvErro
         timestamp: crate::output::timestamp(),
         host: host.to_string(),
         power: power_str(on),
+    })
+}
+
+/// Gap between successive key presses in one `key` invocation.
+const KEY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Settle time after the last inject before the connection is dropped, so
+/// the TV has processed the message before we close on it.
+const SEND_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// stdout payload for `atv key`.
+#[derive(Debug, Serialize)]
+pub struct KeysOutput {
+    pub timestamp: String,
+    pub host: String,
+    pub keys: Vec<String>,
+}
+
+/// Connects to the TV and injects the given key presses in order, with the
+/// same post-handshake grace period the power path needs (see
+/// [`KEY_INJECT_GRACE`]).
+pub fn send_keys(host: std::net::IpAddr, port: u16, keys: &[i32]) -> Result<KeysOutput, AtvError> {
+    let (_on, mut conn, _hs) = read_power(host, port)?;
+    std::thread::sleep(KEY_INJECT_GRACE);
+    for (i, &code) in keys.iter().enumerate() {
+        if i > 0 {
+            std::thread::sleep(KEY_INTERVAL);
+        }
+        crate::framing::write_message(&mut conn, &key_message(code)).map_err(|e| {
+            AtvError::new(
+                ErrorKind::ProtocolError,
+                format!("failed to send {}: {e}", keycode_name(code)),
+            )
+        })?;
+    }
+    std::thread::sleep(SEND_SETTLE);
+    Ok(KeysOutput {
+        timestamp: crate::output::timestamp(),
+        host: host.to_string(),
+        keys: keys.iter().map(|&c| keycode_name(c)).collect(),
+    })
+}
+
+/// stdout payload for `atv launch`.
+#[derive(Debug, Serialize)]
+pub struct LaunchOutput {
+    pub timestamp: String,
+    pub host: String,
+    pub app_link: String,
+}
+
+/// Connects to the TV and asks it to launch the given app link.
+pub fn send_app_link(
+    host: std::net::IpAddr,
+    port: u16,
+    app_link: &str,
+) -> Result<LaunchOutput, AtvError> {
+    let (_on, mut conn, _hs) = read_power(host, port)?;
+    std::thread::sleep(KEY_INJECT_GRACE);
+    crate::framing::write_message(&mut conn, &app_link_message(app_link)).map_err(|e| {
+        AtvError::new(
+            ErrorKind::ProtocolError,
+            format!("failed to send app link: {e}"),
+        )
+    })?;
+    std::thread::sleep(SEND_SETTLE);
+    Ok(LaunchOutput {
+        timestamp: crate::output::timestamp(),
+        host: host.to_string(),
+        app_link: app_link.to_string(),
     })
 }
 
@@ -434,6 +528,34 @@ mod tests {
     fn power_str_maps_bool() {
         assert_eq!(power_str(true), "on");
         assert_eq!(power_str(false), "off");
+    }
+
+    #[test]
+    fn features_include_app_link() {
+        assert_eq!(FEATURES, 1 | 2 | 32 | 512);
+    }
+
+    #[test]
+    fn key_message_builds_short_press_for_any_code() {
+        let msg = key_message(RemoteKeyCode::KeycodeVolumeUp as i32);
+        let inject = msg.remote_key_inject.unwrap();
+        assert_eq!(inject.key_code, 24);
+        assert_eq!(inject.direction, RemoteDirection::Short as i32);
+    }
+
+    #[test]
+    fn keycode_name_maps_code_to_canonical_name() {
+        assert_eq!(keycode_name(24), "KEYCODE_VOLUME_UP");
+        assert_eq!(keycode_name(26), "KEYCODE_POWER");
+    }
+
+    #[test]
+    fn app_link_message_carries_the_link() {
+        let msg = app_link_message("https://www.youtube.com");
+        assert_eq!(
+            msg.remote_app_link_launch_request.unwrap().app_link,
+            "https://www.youtube.com"
+        );
     }
 
     #[test]

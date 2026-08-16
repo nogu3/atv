@@ -8,11 +8,14 @@ pub fn timestamp() -> String {
 
 /// Prints one JSON object to stdout, followed by a newline. stdout stays
 /// pure structured JSON — this is the only thing `atv` ever writes there.
+/// A write failure (e.g. a closed pipe) is ignored rather than panicking,
+/// keeping the exit-code contract intact.
 pub fn emit<T: Serialize>(value: &T) {
-    println!(
-        "{}",
-        serde_json::to_string(value).expect("output serialization cannot fail")
-    );
+    use std::io::Write;
+    let json = serde_json::to_string(value).expect("output serialization cannot fail");
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{json}");
+    let _ = out.flush();
 }
 
 #[cfg(test)]

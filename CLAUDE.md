@@ -65,7 +65,13 @@ atv pair   --host <ip>            # TV shows code; atv reads it from stdin
 atv status --host <ip>            # {"power": "on" | "off", ...}
 atv on     --host <ip>            # idempotent; reports resulting state
 atv off    --host <ip>
+atv key    --host <ip> <KEY>...   # short key presses (VOLUME_UP, DPAD_*, ...)
+atv launch --host <ip> <link>     # app link / deeplink
+atv discover [--timeout <secs>]   # mDNS browse (no --host, no credentials)
 ```
+
+(`key`, `launch`, and `discover` were originally deferred and were added
+after Phases 0-3 shipped, at the user's request.)
 
 ## Output conventions
 
@@ -121,6 +127,7 @@ casa propagates these as-is; keep them stable once shipped.
 | Certificates | `rcgen` | Generate the client identity at first `pair` |
 | Protobuf | `prost` (+ `prost-build`) | Vendored `.proto` files (`pairingmessage.proto`, `remotemessage.proto`) |
 | JSON | `serde` + `serde_json` | |
+| mDNS | `mdns-sd` | `discover` only; pure Rust |
 | Logging | `tracing` + `tracing-subscriber` | stderr |
 | Async | none — `std::net` + blocking TLS is enough for one-shot ops | Add tokio only if a real need appears |
 
@@ -135,12 +142,9 @@ Keep dependencies minimal.
 
 ## Explicitly deferred (do not implement without discussion)
 
-- Key injection (`atv key <keycode>`), volume, d-pad navigation.
-- App launch / deeplinks.
-- mDNS discovery convenience command (operationally: `avahi-browse -rt
-  _androidtvremote2._tcp`).
 - Voice, IME, casting, media metadata.
 - Any resident / subscription mode (that is `casad`'s territory).
+- Long-press key injection (`RemoteDirection` START_LONG / END_LONG).
 
 ## Roadmap
 

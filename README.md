@@ -12,6 +12,9 @@ atv pair   --host <ip>            # TV shows a code; atv reads it from stdin
 atv status --host <ip>            # {"power": "on" | "off", ...}
 atv on     --host <ip>            # idempotent; reports resulting state
 atv off    --host <ip>
+atv key    --host <ip> <KEY>...   # e.g. VOLUME_UP, DPAD_CENTER, 26
+atv launch --host <ip> <link>     # e.g. https://www.youtube.com
+atv discover [--timeout <secs>]   # mDNS browse for TVs (default 3 s)
 ```
 
 `--port` overrides the default port (6467 for `pair`, 6466 otherwise).
@@ -31,8 +34,17 @@ If the code is already known, it can be piped in instead of typed
 interactively (`echo 1a2b3c | atv pair --host 192.0.2.10`) — not the typical
 flow, since the code is generated fresh by the TV on each pairing attempt.
 
-> Status: Phase 1 (pairing), Phase 2 (`status`), and Phase 3 (`on`/`off`)
-> implemented.
+`key` takes one or more Android keycodes — names with or without the
+`KEYCODE_` prefix (case-insensitive) or numeric values — and sends them in
+order as short presses. Volume and d-pad navigation are plain keycodes
+(`VOLUME_UP`, `VOLUME_DOWN`, `MUTE`, `DPAD_UP/DOWN/LEFT/RIGHT/CENTER`,
+`BACK`, `HOME`). `launch` sends an app link (deeplink). `discover` browses
+`_androidtvremote2._tcp` and prints every device found:
+
+```
+$ atv discover
+{"timestamp":"2026-08-16T11:16:22+09:00","devices":[{"name":"Living Room TV","host":"192.0.2.10","port":6466}]}
+```
 
 `on`/`off` are idempotent: they read the TV's current power state and only
 send a power key press when it differs from the requested state. The
@@ -46,12 +58,14 @@ $ atv off --host 192.0.2.10
 {"timestamp":"2026-08-15T12:34:57+09:00","host":"192.0.2.10","power":"off","changed":false}
 ```
 
-When a key is sent, `atv` waits for the TV to confirm the new state over the
-session connection, bounded to ~5 s max overall (each read has its own 3 s
-timeout, but the wall-clock deadline is what stops a chattering TV — one
-that keeps sending other messages without ever confirming — from holding
-the CLI open indefinitely). If the TV doesn't confirm in time — or closes
-the connection, which is typical when it powers off — `atv` reports the
+When a power key is sent, `atv` waits for the TV to confirm the new state
+over the session connection. The wait is bounded: a 5 s wall-clock deadline
+gates loop re-entry, and each read has its own 3 s timeout, so the worst
+case is roughly 8 s (a read started just before the deadline may run its
+full timeout); it is the deadline that stops a chattering TV — one that
+keeps sending other messages without ever confirming — from holding the
+CLI open indefinitely. If the TV doesn't confirm in time — or closes the
+connection, which is typical when it powers off — `atv` reports the
 requested state as a best-effort assumption rather than blocking or
 failing; it does not re-verify with a follow-up `status` call.
 
@@ -110,13 +124,15 @@ RUST_LOG=debug cargo run -- status --host 192.0.2.10
 - The TV may rotate IPs via DHCP; prefer a DHCP reservation for the TV.
 - Some TVs silently drop key injects sent immediately after the session
   handshake (measured on a REGZA: keys within ~100 ms of `remote_start` are
-  lost). `atv` waits a 1 s grace period before sending the power key, so
-  `on`/`off` take about a second longer than `status`.
+  lost). `atv` waits a 1 s grace period before any inject (`on`/`off`,
+  `key`, `launch`), so those commands take about a second longer than
+  `status`.
 
 ## Verified hardware
 
 - TOSHIBA REGZA 65X8900K (Android TV, reports itself as Hisense
-  "SmartTV FFM"): `pair`, `status` (on and network standby), and all four
-  `on`/`off` transitions verified against the real device (2026-08-16). The
-  TV pushes `remote_start{started:false}` on power-off, so `off` reports an
+  "SmartTV FFM"): `pair`, `status` (on and network standby), all four
+  `on`/`off` transitions, `key` (volume, HOME), `launch` (YouTube), and
+  `discover` verified against the real device (2026-08-16). The TV pushes
+  `remote_start{started:false}` on power-off, so `off` reports an
   observed — not assumed — resulting state.

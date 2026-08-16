@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod discover;
 mod error;
 mod framing;
 mod identity;
@@ -33,14 +34,10 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), AtvError> {
-    let credential_dir = config::credential_dir_from_env()?;
     let port = cli.command.port();
-    tracing::debug!(
-        dir = %credential_dir.display(),
-        host = %cli.command.args().host,
-        port,
-        "resolved credential directory and target"
-    );
+    if let Some(args) = cli.command.args() {
+        tracing::debug!(host = %args.host, port, "target");
+    }
 
     match cli.command {
         Command::Pair(args) => {
@@ -60,6 +57,21 @@ fn run(cli: Cli) -> Result<(), AtvError> {
         }
         Command::Off(args) => {
             let out = session::set_power(args.host, port, false)?;
+            output::emit(&out);
+            Ok(())
+        }
+        Command::Key(args) => {
+            let out = session::send_keys(args.target.host, port, &args.keys)?;
+            output::emit(&out);
+            Ok(())
+        }
+        Command::Launch(args) => {
+            let out = session::send_app_link(args.target.host, port, &args.app_link)?;
+            output::emit(&out);
+            Ok(())
+        }
+        Command::Discover(args) => {
+            let out = discover::discover(args.timeout)?;
             output::emit(&out);
             Ok(())
         }

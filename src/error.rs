@@ -32,6 +32,10 @@ impl AtvError {
         }
     }
 
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+
     pub fn to_json(&self) -> String {
         serde_json::to_string(&ErrorEnvelope { error: self })
             .expect("error serialization cannot fail")

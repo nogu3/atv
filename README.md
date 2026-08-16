@@ -10,7 +10,7 @@ mobile remote uses. Designed to be called by
 ```
 atv pair   --host <ip>            # TV shows a code; atv reads it from stdin
 atv status --host <ip>            # {"power": "on" | "off", ...}
-atv on     --host <ip>            # idempotent; reports resulting state
+atv on     --host <ip> [--mac <mac>]  # idempotent; --mac adds a WoL fallback
 atv off    --host <ip>
 atv key    --host <ip> <KEY>...   # e.g. VOLUME_UP, DPAD_CENTER, 26
 atv launch --host <ip> <link>     # e.g. https://www.youtube.com
@@ -57,6 +57,25 @@ $ atv off --host 192.0.2.10
 $ atv off --host 192.0.2.10
 {"timestamp":"2026-08-15T12:34:57+09:00","host":"192.0.2.10","power":"off","changed":false}
 ```
+
+TVs drop off the network entirely after a while in standby (deep standby —
+measured on a REGZA: somewhere between 6 and 15 minutes after power-off,
+the session port closes and even ARP goes unanswered). From that state the
+Remote v2 protocol cannot wake them; only Wake-on-LAN can. When `on` is
+given the TV's MAC via `--mac` and the TV is unreachable, `atv` broadcasts
+a WoL magic packet, waits for the session port to come back (up to 15 s;
+~5 s measured), and then runs the normal power-on flow. The output carries
+`"wol":true` when this fallback fired:
+
+```
+$ atv on --host 192.0.2.10 --mac aa:bb:cc:dd:ee:ff
+{"timestamp":"2026-08-16T14:50:04+09:00","host":"192.0.2.10","power":"on","changed":true,"wol":true}
+```
+
+(On the REGZA the magic packet brings the network stack back while the
+screen stays off, so the normal power-key flow still runs — hence
+`changed:true`. A TV that wakes fully from WoL alone would report
+`changed:false` instead; both are accurate.)
 
 When a power key is sent, `atv` waits for the TV to confirm the new state
 over the session connection. The wait is bounded: a 5 s wall-clock deadline
@@ -121,6 +140,9 @@ RUST_LOG=debug cargo run -- status --host 192.0.2.10
 
 - Power-on over LAN requires the TV's **network standby** setting; without
   it the TV drops off the network when off and `on` exits 3.
+- Even with network standby, TVs eventually enter **deep standby** and
+  leave the network (REGZA: between 6 and 15 minutes after power-off).
+  Pass `--mac` to `atv on` so it can fall back to Wake-on-LAN.
 - The TV may rotate IPs via DHCP; prefer a DHCP reservation for the TV.
 - Some TVs silently drop key injects sent immediately after the session
   handshake (measured on a REGZA: keys within ~100 ms of `remote_start` are
@@ -135,4 +157,7 @@ RUST_LOG=debug cargo run -- status --host 192.0.2.10
   `on`/`off` transitions, `key` (volume, HOME), `launch` (YouTube), and
   `discover` verified against the real device (2026-08-16). The TV pushes
   `remote_start{started:false}` on power-off, so `off` reports an
-  observed — not assumed — resulting state.
+  observed — not assumed — resulting state. Deep-standby timing measured on
+  the same device: still wakeable via the protocol 6 minutes after
+  power-off, gone from the network at 15 minutes, wakeable by WoL within
+  ~5 s of the magic packet.

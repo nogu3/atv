@@ -44,8 +44,8 @@ pub enum Command {
     Pair(HostArgs),
     /// Report the device's power state
     Status(HostArgs),
-    /// Power on (idempotent)
-    On(HostArgs),
+    /// Power on (idempotent; --mac enables a Wake-on-LAN fallback)
+    On(OnArgs),
     /// Power off (idempotent)
     Off(HostArgs),
     /// Send one or more key presses (e.g. VOLUME_UP, DPAD_CENTER)
@@ -59,7 +59,8 @@ pub enum Command {
 impl Command {
     pub fn args(&self) -> Option<&HostArgs> {
         match self {
-            Command::Pair(a) | Command::Status(a) | Command::On(a) | Command::Off(a) => Some(a),
+            Command::Pair(a) | Command::Status(a) | Command::Off(a) => Some(a),
+            Command::On(o) => Some(&o.target),
             Command::Key(k) => Some(&k.target),
             Command::Launch(l) => Some(&l.target),
             Command::Discover(_) => None,
@@ -84,6 +85,17 @@ pub struct HostArgs {
     /// TCP port (default: 6467 for pair, 6466 otherwise)
     #[arg(long)]
     pub port: Option<u16>,
+}
+
+#[derive(Debug, Args)]
+pub struct OnArgs {
+    #[command(flatten)]
+    pub target: HostArgs,
+
+    /// TV MAC address; when set and the TV is unreachable (deep standby),
+    /// send a Wake-on-LAN magic packet and retry
+    #[arg(long, value_parser = crate::wol::parse_mac)]
+    pub mac: Option<[u8; 6]>,
 }
 
 #[derive(Debug, Args)]
@@ -153,6 +165,36 @@ mod tests {
     #[test]
     fn host_is_required() {
         assert!(Cli::try_parse_from(["atv", "status"]).is_err());
+    }
+
+    #[test]
+    fn on_accepts_an_optional_mac_for_wake_on_lan() {
+        let cli = Cli::try_parse_from([
+            "atv",
+            "on",
+            "--host",
+            "192.0.2.10",
+            "--mac",
+            "e4:3b:c9:97:84:77",
+        ])
+        .unwrap();
+        let Command::On(args) = cli.command else {
+            panic!("expected on");
+        };
+        assert_eq!(args.mac, Some([0xe4, 0x3b, 0xc9, 0x97, 0x84, 0x77]));
+
+        let cli = Cli::try_parse_from(["atv", "on", "--host", "192.0.2.10"]).unwrap();
+        let Command::On(args) = cli.command else {
+            panic!("expected on");
+        };
+        assert_eq!(args.mac, None);
+    }
+
+    #[test]
+    fn on_rejects_invalid_macs() {
+        assert!(
+            Cli::try_parse_from(["atv", "on", "--host", "192.0.2.10", "--mac", "nope"]).is_err()
+        );
     }
 
     #[test]

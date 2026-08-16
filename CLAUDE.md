@@ -63,7 +63,7 @@ That's it. Everything else is deferred (see "Explicitly deferred").
 ```
 atv pair   --host <ip>            # TV shows code; atv reads it from stdin
 atv status --host <ip>            # {"power": "on" | "off", ...}
-atv on     --host <ip>            # idempotent; reports resulting state
+atv on     --host <ip> [--mac <mac>]  # idempotent; --mac = WoL fallback for deep standby
 atv off    --host <ip>
 atv key    --host <ip> <KEY>...   # short key presses (VOLUME_UP, DPAD_*, ...)
 atv launch --host <ip> <link>     # app link / deeplink
@@ -113,7 +113,9 @@ casa propagates these as-is; keep them stable once shipped.
 - casa gains an `androidtv` protocol variant (Phase 3 adapter pattern:
   enum variant + adapter + tests, handlers untouched).
 - `devices.toml`: `protocol = "androidtv"`, `host = "192.0.2.10"`.
-- `casa on/off` → `atv on/off --host <host>`; `casa get/set/describe` stay
+- `casa on/off` → `atv on/off --host <host>` (`on` should also pass
+  `--mac <mac>` from `devices.toml` so deep-standby TVs wake via WoL);
+  `casa get/set/describe` stay
   unsupported for this protocol (casa exits 14).
 - Binary resolved from `PATH`, overridable via `CASA_ATV_BIN`.
 

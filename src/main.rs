@@ -9,6 +9,7 @@ mod pairing;
 mod proto;
 mod session;
 mod tls;
+mod wol;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -51,7 +52,7 @@ fn run(cli: Cli) -> Result<(), AtvError> {
             Ok(())
         }
         Command::On(args) => {
-            let out = session::set_power(args.host, port, true)?;
+            let out = session::set_power_with_wake(args.target.host, port, true, args.mac)?;
             output::emit(&out);
             Ok(())
         }

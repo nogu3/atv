@@ -295,6 +295,9 @@ pub struct PowerOutput {
     pub host: String,
     pub power: &'static str,
     pub changed: bool,
+    /// Present (true) only when a Wake-on-LAN magic packet was needed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wol: Option<bool>,
 }
 
 /// Connects to the TV, reads its current power state, and — only if it
@@ -378,7 +381,60 @@ pub fn set_power(
         host: host.to_string(),
         power: power_str(resulting),
         changed,
+        wol: None,
     })
+}
+
+/// How long to wait for the TV's network stack to come back after a
+/// Wake-on-LAN magic packet (measured ~5 s on the REGZA).
+const WOL_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Like [`set_power`], but when turning on an unreachable TV with a known
+/// MAC address, falls back to a Wake-on-LAN magic packet: send it, wait for
+/// the session port to come back, then run the normal power-on flow. TVs in
+/// deep standby (after ~10 min off on the REGZA) drop off the network
+/// entirely and can only be woken this way.
+pub fn set_power_with_wake(
+    host: std::net::IpAddr,
+    port: u16,
+    want_on: bool,
+    mac: Option<[u8; 6]>,
+) -> Result<PowerOutput, AtvError> {
+    let first = set_power(host, port, want_on);
+    let Some(mac) = mac else {
+        return first;
+    };
+    match first {
+        Err(e) if want_on && e.kind() == ErrorKind::Unreachable => {
+            tracing::debug!("TV unreachable — sending wake-on-lan magic packet");
+            crate::wol::send_magic_packet(mac)?;
+            wait_for_port(host, port, WOL_WAIT)?;
+            let mut out = set_power(host, port, want_on)?;
+            out.wol = Some(true);
+            Ok(out)
+        }
+        other => other,
+    }
+}
+
+/// Polls the TCP port until it accepts a connection or `budget` runs out.
+fn wait_for_port(
+    host: std::net::IpAddr,
+    port: u16,
+    budget: std::time::Duration,
+) -> Result<(), AtvError> {
+    let addr = std::net::SocketAddr::new(host, port);
+    let deadline = std::time::Instant::now() + budget;
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1)).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    Err(AtvError::new(
+        ErrorKind::Unreachable,
+        format!("{addr} still unreachable after a wake-on-lan magic packet — wrong MAC, or WoL disabled on the TV?"),
+    ))
 }
 
 #[cfg(test)]

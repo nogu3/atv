@@ -9,6 +9,12 @@ use crate::proto::remote::{
 /// Feature bits this client supports: PING (1) | KEY (2) | POWER (32).
 pub const FEATURES: i32 = 1 | 2 | 32;
 
+/// Grace period between the session becoming ready (`remote_start`) and
+/// sending a key inject. TVs silently drop keys that arrive too early
+/// (see the comment in [`set_power`]); one second gives a comfortable
+/// margin over the measured threshold.
+const KEY_INJECT_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// Tracks the state of the Remote v2 session handshake (configure /
 /// set_active / ping / start) as messages arrive from the TV.
 pub struct SessionHandshake {
@@ -29,9 +35,9 @@ impl SessionHandshake {
     pub fn handle(&mut self, msg: RemoteMessage) -> Result<Option<RemoteMessage>, AtvError> {
         if let Some(configure) = msg.remote_configure {
             let code1 = if configure.code1 != 0 {
-                FEATURES & configure.code1
+                self.active_features & configure.code1
             } else {
-                FEATURES
+                self.active_features
             };
             self.active_features = code1;
             return Ok(Some(RemoteMessage {
@@ -139,6 +145,7 @@ pub fn read_power(
         let msg: crate::proto::remote::RemoteMessage = crate::framing::read_message(&mut conn)
             .map_err(|e| map_session_read_error(e, got_any))?;
         got_any = true;
+        tracing::debug!(?msg, "session message received");
         if let Some(reply) = hs.handle(msg)? {
             crate::framing::write_message(&mut conn, &reply).map_err(|e| {
                 AtvError::new(
@@ -216,6 +223,13 @@ pub fn set_power(
     let changed = needs_power_key(current, want_on);
     let mut resulting = current;
     if changed {
+        // Key injects sent right after `remote_start` are silently dropped by
+        // some TVs (measured on a TOSHIBA REGZA 65X8900K / Hisense "SmartTV
+        // FFM" firmware: keys within ~100 ms of remote_start are lost, ~300 ms
+        // works). The reference implementation never hits this because a human
+        // presses buttons long after connecting. Wait a grace period before
+        // injecting.
+        std::thread::sleep(KEY_INJECT_GRACE);
         crate::framing::write_message(&mut conn, &power_key_message()).map_err(|e| {
             AtvError::new(
                 ErrorKind::ProtocolError,
@@ -244,6 +258,7 @@ pub fn set_power(
             else {
                 break;
             };
+            tracing::debug!(?msg, "message received while awaiting power confirmation");
             match hs.handle(msg) {
                 Ok(Some(reply)) => {
                     let _ = crate::framing::write_message(&mut conn, &reply);

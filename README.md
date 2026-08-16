@@ -108,3 +108,15 @@ RUST_LOG=debug cargo run -- status --host 192.0.2.10
 - Power-on over LAN requires the TV's **network standby** setting; without
   it the TV drops off the network when off and `on` exits 3.
 - The TV may rotate IPs via DHCP; prefer a DHCP reservation for the TV.
+- Some TVs silently drop key injects sent immediately after the session
+  handshake (measured on a REGZA: keys within ~100 ms of `remote_start` are
+  lost). `atv` waits a 1 s grace period before sending the power key, so
+  `on`/`off` take about a second longer than `status`.
+
+## Verified hardware
+
+- TOSHIBA REGZA 65X8900K (Android TV, reports itself as Hisense
+  "SmartTV FFM"): `pair`, `status` (on and network standby), and all four
+  `on`/`off` transitions verified against the real device (2026-08-16). The
+  TV pushes `remote_start{started:false}` on power-off, so `off` reports an
+  observed — not assumed — resulting state.

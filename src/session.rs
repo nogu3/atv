@@ -300,9 +300,83 @@ pub struct PowerOutput {
     pub wol: Option<bool>,
 }
 
+/// Total `on` attempts (the first one plus retries) before giving up.
+const POWER_ON_ATTEMPTS: usize = 4;
+
+/// Pause before reconnecting for another `on` attempt, giving a TV that is
+/// still shutting down time to settle into standby.
+const POWER_ON_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Whether another `on` attempt is warranted after one whose post-key
+/// observation was `observed` (`None` = the TV never confirmed).
+///
+/// Only `on` retries: a power key sent within a few seconds of turning the
+/// TV off is silently ignored while it is still shutting down (measured on
+/// the REGZA 65X8900K), and that shows up as no confirmation. `off` never
+/// retries — it normally ends with the connection closing unconfirmed, and
+/// a blind re-press could turn a TV that did power off back on. Each retry
+/// re-reads the state on a fresh connection before pressing, so `on` stays
+/// idempotent.
+pub fn should_retry_power_on(want_on: bool, observed: Option<bool>) -> bool {
+    want_on && observed != Some(true)
+}
+
 /// Connects to the TV, reads its current power state, and — only if it
 /// differs from `want_on` — sends a power key press. Idempotent: an
 /// already-matching state is a no-op (`changed: false`).
+///
+/// For `on`, an attempt the TV does not confirm is retried (see
+/// [`should_retry_power_on`]) up to [`POWER_ON_ATTEMPTS`] in total; each
+/// retry reconnects and re-reads the state first. `changed` reports whether
+/// any attempt sent a key.
+pub fn set_power(
+    host: std::net::IpAddr,
+    port: u16,
+    want_on: bool,
+) -> Result<PowerOutput, AtvError> {
+    let mut attempt = press_power_once(host, port, want_on)?;
+    let mut changed = attempt.changed;
+    let mut tries = 1;
+    while tries < POWER_ON_ATTEMPTS && should_retry_power_on(want_on, attempt.observed) {
+        tracing::debug!(
+            tries,
+            observed = ?attempt.observed,
+            "power on not confirmed — reconnecting to re-read state and retry"
+        );
+        std::thread::sleep(POWER_ON_RETRY_BACKOFF);
+        match press_power_once(host, port, want_on) {
+            Ok(next) => {
+                changed |= next.changed;
+                attempt = next;
+            }
+            Err(e) => {
+                tracing::debug!("giving up power-on retries: {}", e.to_json());
+                break;
+            }
+        }
+        tries += 1;
+    }
+    Ok(PowerOutput {
+        timestamp: crate::output::timestamp(),
+        host: host.to_string(),
+        power: power_str(attempt.resulting),
+        changed,
+        wol: None,
+    })
+}
+
+/// Outcome of one connect → read → (maybe) press cycle.
+struct PowerAttempt {
+    /// Whether this attempt sent a power key.
+    changed: bool,
+    /// State to report: observed when known, otherwise the assumed target.
+    resulting: bool,
+    /// State actually seen after this attempt (the connect-time state when
+    /// no key was needed; `None` when the TV never confirmed a key press).
+    observed: Option<bool>,
+}
+
+/// One connect → read → (maybe) press cycle of [`set_power`].
 ///
 /// After sending the key, best-effort waits for the TV to confirm the new
 /// state via a fresh `remote_start` message, bounded to ~5 s total (each
@@ -311,14 +385,15 @@ pub struct PowerOutput {
 /// by the overall deadline). On timeout, deadline expiry, or connection
 /// close (typical when the TV powers off), the assumed target state is
 /// reported instead of blocking indefinitely.
-pub fn set_power(
+fn press_power_once(
     host: std::net::IpAddr,
     port: u16,
     want_on: bool,
-) -> Result<PowerOutput, AtvError> {
+) -> Result<PowerAttempt, AtvError> {
     let (current, mut conn, mut hs) = read_power(host, port)?;
     let changed = needs_power_key(current, want_on);
     let mut resulting = current;
+    let mut observed = Some(current);
     if changed {
         // Key injects sent right after `remote_start` are silently dropped by
         // some TVs (measured on a TOSHIBA REGZA 65X8900K / Hisense "SmartTV
@@ -372,16 +447,15 @@ pub fn set_power(
                 break;
             }
         }
-        if let Some(observed) = hs.power {
-            resulting = observed;
+        observed = hs.power;
+        if let Some(seen) = hs.power {
+            resulting = seen;
         }
     }
-    Ok(PowerOutput {
-        timestamp: crate::output::timestamp(),
-        host: host.to_string(),
-        power: power_str(resulting),
+    Ok(PowerAttempt {
         changed,
-        wol: None,
+        resulting,
+        observed,
     })
 }
 
@@ -620,5 +694,23 @@ mod tests {
         assert!(!needs_power_key(false, false)); // off → off: no-op
         assert!(needs_power_key(false, true));
         assert!(needs_power_key(true, false));
+    }
+
+    #[test]
+    fn power_on_retries_until_the_tv_confirms_on() {
+        // No confirmation (key dropped while the TV was still shutting down)
+        // or an explicit "still off" both warrant another attempt.
+        assert!(should_retry_power_on(true, None));
+        assert!(should_retry_power_on(true, Some(false)));
+        assert!(!should_retry_power_on(true, Some(true)));
+    }
+
+    #[test]
+    fn power_off_is_never_retried() {
+        // Turning off typically closes the connection without confirming;
+        // retrying would risk toggling a TV that did power off back on.
+        assert!(!should_retry_power_on(false, None));
+        assert!(!should_retry_power_on(false, Some(true)));
+        assert!(!should_retry_power_on(false, Some(false)));
     }
 }

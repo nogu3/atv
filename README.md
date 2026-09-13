@@ -84,9 +84,18 @@ case is roughly 8 s (a read started just before the deadline may run its
 full timeout); it is the deadline that stops a chattering TV — one that
 keeps sending other messages without ever confirming — from holding the
 CLI open indefinitely. If the TV doesn't confirm in time — or closes the
-connection, which is typical when it powers off — `atv` reports the
+connection, which is typical when it powers off — `off` reports the
 requested state as a best-effort assumption rather than blocking or
-failing; it does not re-verify with a follow-up `status` call.
+failing.
+
+`on` does not stop there: an unconfirmed `on` reconnects after 2 s,
+re-reads the power state, and presses again only if the TV is still off —
+up to 4 attempts in total (worst case roughly 40 s). A TV that is still
+shutting down silently ignores the power key for several seconds (measured
+on the REGZA 65X8900K), so an `on` right after an `off` would otherwise
+report success while the TV stays dark. Because every retry re-reads the
+state first, `on` stays idempotent; `changed` is true if any attempt sent a
+key.
 
 ## Output conventions
 

@@ -1,0 +1,5 @@
+[advisories]
+# RUSTSEC-2023-0071（rsa の Marvin attack・修正版なし）: rsa は identity.rs で
+# 自分のクライアント鍵を一度生成して PEM 化するだけで、復号・署名の時間を外部に
+# 観測させる経路が無い。修正版が出たら Renovate の更新で外す。
+ignore = ["RUSTSEC-2023-0071"]

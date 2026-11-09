@@ -14,7 +14,7 @@ jiff = "0.2"
 prost = "0.13"
 rand = "0.8"
 rcgen = "0.13"
-rsa = { version = "0.9", features = ["sha2"] }
+rsa = { version = "0.10", features = ["sha2"] }
 mdns-sd = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
